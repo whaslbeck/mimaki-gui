@@ -1,0 +1,2 @@
+# Files excluded from `git archive` exports (i.e. the public release).
+release.sh export-ignore
