@@ -290,6 +290,10 @@ class MainWindow(QMainWindow):
         self._act_insert_shape.setShortcut(QKeySequence("Ctrl+I"))
         edit_menu.addAction(self._act_insert_shape)
 
+        self._act_drill = QAction("&Drilling Pattern…", self)
+        self._act_drill.setShortcut(QKeySequence("Ctrl+Shift+D"))
+        edit_menu.addAction(self._act_drill)
+
         edit_menu.addSeparator()
         self._act_mirror_h = QAction("Mirror &Horizontal", self)
         self._act_mirror_h.setShortcut(QKeySequence("Ctrl+Shift+H"))
@@ -449,6 +453,7 @@ class MainWindow(QMainWindow):
         self._act_select_all.triggered.connect(self._on_select_all)
         self._act_clone.triggered.connect(self._on_clone)
         self._act_insert_shape.triggered.connect(self._on_insert_shape)
+        self._act_drill.triggered.connect(self._on_drill)
         self._act_mirror_h.triggered.connect(self._on_mirror_h)
         self._act_mirror_v.triggered.connect(self._on_mirror_v)
         self._act_array.triggered.connect(self._on_array)
@@ -974,6 +979,48 @@ class MainWindow(QMainWindow):
             self._update_undo_actions()
 
         self._undo.push(undo_insert, redo_insert, f"Insert {label}")
+        self._update_undo_actions()
+
+    @pyqtSlot()
+    def _on_drill(self):
+        from app.gui.dialogs.drill_dialog import DrillDialog
+        dlg = DrillDialog(self)
+        if not dlg.exec():
+            return
+        moves = dlg.get_moves()
+        if not moves:
+            return
+        label = dlg.get_label()
+        obj = GcodeObject.from_generated(moves, label)
+        self._project.add_object(obj)
+        self._canvas.set_selected(obj.id)
+        self._canvas.update()
+        self._object_panel.refresh_list()
+        self._object_panel.select_object(obj.id)
+        self._update_duration()
+        self._update_title()
+
+        def undo_drill():
+            self._project.remove_object(obj.id)
+            self._project.modified = True
+            self._canvas.set_selected("")
+            self._canvas.update()
+            self._object_panel.refresh_list()
+            self._update_duration()
+            self._update_undo_actions()
+
+        def redo_drill():
+            if not self._project.object_by_id(obj.id):
+                self._project.objects.append(obj)
+            self._project.modified = True
+            self._canvas.set_selected(obj.id)
+            self._canvas.update()
+            self._object_panel.refresh_list()
+            self._object_panel.select_object(obj.id)
+            self._update_duration()
+            self._update_undo_actions()
+
+        self._undo.push(undo_drill, redo_drill, f"Insert {label}")
         self._update_undo_actions()
 
     # ------------------------------------------------------------------
