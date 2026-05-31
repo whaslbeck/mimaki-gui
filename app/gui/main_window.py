@@ -472,6 +472,7 @@ class MainWindow(QMainWindow):
         self._canvas.context_action.connect(self._on_canvas_context_action)
         self._canvas.zone_delete_requested.connect(self._on_zone_delete_requested)
         self._canvas.zone_rename_requested.connect(self._on_zone_rename_requested)
+        self._canvas.zone_edit_requested.connect(self._on_zone_edit_requested)
         self._canvas.zone_changed.connect(self._on_zone_changed)
 
         self._object_panel.object_selected.connect(self._on_panel_select)
@@ -1578,16 +1579,29 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Send", "Not connected to machine.")
             return
 
-        # Collision check
+        # Collision check — test actual move segments against forbidden zones,
+        # using the bounding box only as a fast pre-filter.
         for obj in self._project.visible_objects():
             bb = obj.bounding_box
-            for zone in self._project.forbidden_zones:
-                if zone.overlaps_rect(bb.min_x, bb.min_y, bb.width, bb.height):
-                    QMessageBox.critical(
-                        self, "Send blocked",
-                        f"Object '{obj.label}' overlaps a forbidden zone.",
-                    )
-                    return
+            candidate_zones = [
+                z for z in self._project.forbidden_zones
+                if z.overlaps_rect(bb.min_x, bb.min_y, bb.width, bb.height)
+            ]
+            if not candidate_zones:
+                continue
+            for move in obj.computed_moves:
+                if not move.xy_move:
+                    continue
+                ax, ay = move.from_pos.x, move.from_pos.y
+                bx, by = move.to_pos.x, move.to_pos.y
+                for zone in candidate_zones:
+                    if zone.intersects_segment(ax, ay, bx, by):
+                        name = zone.label or "Forbidden zone"
+                        QMessageBox.critical(
+                            self, "Send blocked",
+                            f"Object '{obj.label}' enters {name!r}.",
+                        )
+                        return
 
         # Pre-send checklist
         reply = QMessageBox.question(
@@ -1919,6 +1933,72 @@ class MainWindow(QMainWindow):
             self._update_undo_actions()
 
         self._undo.push(undo_rename, redo_rename, "Rename zone")
+        self._update_undo_actions()
+
+    @pyqtSlot(str)
+    def _on_zone_edit_requested(self, zone_id: str):
+        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QVBoxLayout
+        zone = next((z for z in self._project.forbidden_zones if z.id == zone_id), None)
+        if not zone:
+            return
+        old_state = {"x": zone.x, "y": zone.y, "width": zone.width, "height": zone.height}
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Edit Zone — {zone.label or zone_id[:8]}")
+        layout = QVBoxLayout(dlg)
+        form = QFormLayout()
+        layout.addLayout(form)
+
+        def _spin(lo, hi, val):
+            s = QDoubleSpinBox()
+            s.setRange(lo, hi)
+            s.setDecimals(2)
+            s.setSuffix(" mm")
+            s.setSingleStep(1.0)
+            s.setValue(val)
+            return s
+
+        sp_x = _spin(-500, 500, zone.x)
+        sp_y = _spin(-500, 500, zone.y)
+        sp_w = _spin(0.1, 1000, zone.width)
+        sp_h = _spin(0.1, 1000, zone.height)
+        form.addRow("X (links):", sp_x)
+        form.addRow("Y (unten):", sp_y)
+        form.addRow("Breite:", sp_w)
+        form.addRow("Höhe:", sp_h)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+
+        if not dlg.exec():
+            return
+
+        new_state = {
+            "x": sp_x.value(), "y": sp_y.value(),
+            "width": sp_w.value(), "height": sp_h.value(),
+        }
+        if new_state == old_state:
+            return
+
+        zone.x, zone.y = new_state["x"], new_state["y"]
+        zone.width, zone.height = new_state["width"], new_state["height"]
+        self._project.modified = True
+        self._canvas.update()
+        self._update_title()
+
+        def apply_state(state: dict):
+            zone.x, zone.y = state["x"], state["y"]
+            zone.width, zone.height = state["width"], state["height"]
+            self._project.modified = True
+            self._canvas.update()
+            self._update_undo_actions()
+
+        self._undo.push(lambda: apply_state(old_state), lambda: apply_state(new_state),
+                        "Edit zone coordinates")
         self._update_undo_actions()
 
     @pyqtSlot(str, object, object)

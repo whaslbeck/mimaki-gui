@@ -34,8 +34,9 @@ class Transform:
     def apply_pos(self, p: Pos) -> Pos:
         x = p.x * self.scale
         y = p.y * self.scale
-        x += self.offset_x
-        y += self.offset_y
+        # Rotate first (around pivot in scaled space), then translate.
+        # Applying offset before rotation would cause the offset itself to be
+        # rotated, making drag direction depend on object rotation.
         if self.rotation_deg != 0.0:
             rad = math.radians(self.rotation_deg)
             cos_a = math.cos(rad)
@@ -44,6 +45,8 @@ class Transform:
             dy = y - self.pivot_y
             x = cos_a * dx - sin_a * dy + self.pivot_x
             y = sin_a * dx + cos_a * dy + self.pivot_y
+        x += self.offset_x
+        y += self.offset_y
         return Pos(x, y, p.z)
 
     def copy(self) -> Transform:

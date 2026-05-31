@@ -139,8 +139,9 @@ class GcodeObject:
 
     def reset_pivot(self):
         bbox = self.bounding_box
-        self.transform.pivot_x = bbox.center_x
-        self.transform.pivot_y = bbox.center_y
+        # pivot is in pre-offset space; world pos of pivot = pivot + offset
+        self.transform.pivot_x = bbox.center_x - self.transform.offset_x
+        self.transform.pivot_y = bbox.center_y - self.transform.offset_y
         self._invalidate()
 
     def reset_transform(self):

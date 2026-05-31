@@ -30,6 +30,7 @@ class WorkCanvas(QWidget):
     zone_added = pyqtSignal(str)                   # zone id
     zone_delete_requested = pyqtSignal(str)        # zone id
     zone_rename_requested = pyqtSignal(str)        # zone id
+    zone_edit_requested = pyqtSignal(str)          # zone id
     zone_changed = pyqtSignal(str, object, object) # zone_id, old_state_dict, new_state_dict
     context_action = pyqtSignal(str, str)          # action_name, obj_id
     animation_finished = pyqtSignal()
@@ -529,8 +530,11 @@ class WorkCanvas(QWidget):
             painter.setPen(QPen(QColor("#FF4400"), 1))
             painter.drawText(tl + QPointF(3, 40 if out_of_bounds else 26), "⚠ could not be placed")
 
-        # Pivot cross
-        pv = self._w2s(obj.transform.pivot_x, obj.transform.pivot_y)
+        # Pivot cross — world pos of pivot = pivot_local + offset
+        pv = self._w2s(
+            obj.transform.pivot_x + obj.transform.offset_x,
+            obj.transform.pivot_y + obj.transform.offset_y,
+        )
         sz = 6
         painter.setPen(QPen(QColor(self._ui.pivot_color), 2))
         painter.drawLine(QPointF(pv.x()-sz, pv.y()), QPointF(pv.x()+sz, pv.y()))
@@ -584,7 +588,8 @@ class WorkCanvas(QWidget):
                     sel = self._project.object_by_id(self._selected_id)
                     if sel and self._rot_handle_hit(sel, sx, sy):
                         self._rot_dragging = True
-                        pv = sel.transform.pivot_x, sel.transform.pivot_y
+                        pv = (sel.transform.pivot_x + sel.transform.offset_x,
+                              sel.transform.pivot_y + sel.transform.offset_y)
                         self._rot_start_angle = math.atan2(wy - pv[1], wx - pv[0])
                         self._rot_orig_deg = sel.transform.rotation_deg
                         self._drag_old_transform = sel.transform.copy()
@@ -592,7 +597,10 @@ class WorkCanvas(QWidget):
 
                     # Check pivot handle (only for selected object)
                     if sel:
-                        pv_sp = self._w2s(sel.transform.pivot_x, sel.transform.pivot_y)
+                        pv_sp = self._w2s(
+                            sel.transform.pivot_x + sel.transform.offset_x,
+                            sel.transform.pivot_y + sel.transform.offset_y,
+                        )
                         if math.hypot(sx - pv_sp.x(), sy - pv_sp.y()) <= 8:
                             self._pivot_dragging = True
                             self._drag_old_transform = sel.transform.copy()
@@ -672,7 +680,8 @@ class WorkCanvas(QWidget):
         elif self._rot_dragging and self._selected_id and self._project:
             obj = self._project.object_by_id(self._selected_id)
             if obj:
-                pv = obj.transform.pivot_x, obj.transform.pivot_y
+                pv = (obj.transform.pivot_x + obj.transform.offset_x,
+                      obj.transform.pivot_y + obj.transform.offset_y)
                 cur_angle = math.atan2(wy - pv[1], wx - pv[0])
                 delta_deg = math.degrees(cur_angle - self._rot_start_angle)
                 new_deg = self._rot_orig_deg + delta_deg
@@ -686,7 +695,8 @@ class WorkCanvas(QWidget):
             obj = self._project.object_by_id(self._selected_id)
             if obj:
                 swx, swy = self._snap(wx, wy, force_free=free)
-                obj.set_pivot(swx, swy)
+                obj.set_pivot(swx - obj.transform.offset_x,
+                              swy - obj.transform.offset_y)
                 self.object_moved.emit(obj.id, obj.transform.offset_x, obj.transform.offset_y)
                 self.update()
 
@@ -940,11 +950,14 @@ class WorkCanvas(QWidget):
             self.update()
             menu = QMenu(self)
             act_rename = menu.addAction("Rename Zone…")
+            act_edit   = menu.addAction("Edit coordinates…")
             menu.addSeparator()
             act_del = menu.addAction("Delete Zone")
             chosen = menu.exec(event.globalPos())
             if chosen == act_rename:
                 self.zone_rename_requested.emit(zone.id)
+            elif chosen == act_edit:
+                self.zone_edit_requested.emit(zone.id)
             elif chosen == act_del:
                 self.zone_delete_requested.emit(zone.id)
             return

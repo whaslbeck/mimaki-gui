@@ -279,8 +279,9 @@ class ObjectPanel(QWidget):
         self._spin_width.setValue(bb.width)
         self._spin_height.setValue(bb.height)
         self._spin_rot.setValue(t.rotation_deg)
-        self._spin_pvx.setValue(t.pivot_x)
-        self._spin_pvy.setValue(t.pivot_y)
+        # Pivot spinboxes show world position (pivot_local + offset)
+        self._spin_pvx.setValue(t.pivot_x + t.offset_x)
+        self._spin_pvy.setValue(t.pivot_y + t.offset_y)
         self._updating = False
 
         self._populate_meta(obj)
@@ -457,7 +458,11 @@ class ObjectPanel(QWidget):
         obj = self._current_obj()
         if obj:
             old = self._capture_old()
-            obj.set_pivot(self._spin_pvx.value(), self._spin_pvy.value())
+            # Spinboxes hold world coords; convert to pre-offset local space
+            obj.set_pivot(
+                self._spin_pvx.value() - obj.transform.offset_x,
+                self._spin_pvy.value() - obj.transform.offset_y,
+            )
             self._commit(obj, old)
 
     def _on_reset_pivot(self):
