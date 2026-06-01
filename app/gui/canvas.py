@@ -254,6 +254,7 @@ class WorkCanvas(QWidget):
         self._draw_work_area(painter)
         self._draw_grid(painter)
         self._draw_wcs_marker(painter)
+        self._draw_ref_points(painter)
         self._draw_zones(painter)
 
         for obj in self._project.visible_objects():
@@ -314,6 +315,53 @@ class WorkCanvas(QWidget):
                 QPointF(sp.x() + arm + 2, sp.y() - 3),
                 f"WCS +{ox:.2f} / +{oy:.2f}",
             )
+
+    def _draw_ref_points(self, painter: QPainter):
+        if self._project is None or not self._project.ref_points:
+            return
+        pts = self._project.ref_points
+        col = QColor("#AA00CC")
+
+        # Working-area rectangle when exactly 2 points are defined
+        if len(pts) == 2:
+            x1, y1 = pts[0].x, pts[0].y
+            x2, y2 = pts[1].x, pts[1].y
+            tl = self._w2s(min(x1, x2), max(y1, y2))
+            br = self._w2s(max(x1, x2), min(y1, y2))
+            rect = QRectF(tl, br)
+            fill = QColor(160, 160, 160, 45)
+            painter.setBrush(fill)
+            border = QColor("#AA00CC")
+            border.setAlpha(140)
+            pen = QPen(border, 1.5, Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.drawRect(rect)
+            painter.setPen(QPen(col, 1))
+            painter.setFont(QFont("Sans", 8))
+            painter.drawText(tl + QPointF(4, 12), "Working area")
+
+        # Individual markers
+        painter.setFont(QFont("Sans", 8, QFont.Weight.Bold))
+        r = 5
+        arm = 9
+        for i, rp in enumerate(pts):
+            sp = self._w2s(rp.x, rp.y)
+            # Cross
+            painter.setPen(QPen(col, 1.5))
+            painter.drawLine(QPointF(sp.x() - arm, sp.y()), QPointF(sp.x() + arm, sp.y()))
+            painter.drawLine(QPointF(sp.x(), sp.y() - arm), QPointF(sp.x(), sp.y() + arm))
+            # Circle
+            painter.setBrush(QColor(170, 0, 204, 200))
+            painter.drawEllipse(sp, r, r)
+            # Label
+            painter.setPen(QPen(col, 1))
+            tag = f"P{i+1}" + (f" {rp.label}" if rp.label else "")
+            coord = f"({rp.x:.1f} / {rp.y:.1f})"
+            painter.drawText(sp + QPointF(arm + 3, -3), tag)
+            painter.setPen(QPen(QColor("#888888"), 1))
+            painter.setFont(QFont("Sans", 7))
+            painter.drawText(sp + QPointF(arm + 3, 9), coord)
+            painter.setFont(QFont("Sans", 8, QFont.Weight.Bold))
 
     def _draw_grid(self, painter: QPainter):
         if self._project is None or not self._project.grid.visible:

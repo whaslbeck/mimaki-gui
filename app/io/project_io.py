@@ -5,6 +5,7 @@ from app.model.gcode_object import GcodeObject
 from app.model.project import Project
 from app.model.types import SpeedSettings, GridSettings, Move, Pos
 from app.model.zone import ForbiddenZone
+from app.model.ref_point import RefPoint
 from app.io.gcode_parser import parse_gcode
 from app.io.hpgl_parser import parse_hpgl
 
@@ -55,6 +56,9 @@ def load_project(filepath: str) -> tuple[Project, list[tuple[str, dict]]]:
 
     for zd in data.get("forbidden_zones", []):
         project.forbidden_zones.append(ForbiddenZone.from_dict(zd))
+
+    for rd in data.get("ref_points", []):
+        project.ref_points.append(RefPoint.from_dict(rd))
 
     project.speeds = SpeedSettings.from_dict(data.get("speeds", {}))
     project.grid = GridSettings.from_dict(data.get("grid", {}))

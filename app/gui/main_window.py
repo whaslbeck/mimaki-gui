@@ -383,6 +383,15 @@ class MainWindow(QMainWindow):
         machine_menu.addAction(self._act_job_log)
 
         machine_menu.addSeparator()
+        machine_menu.addSeparator()
+        self._act_ref_points = QAction("&Reference Points…", self)
+        self._act_ref_points.setShortcut(QKeySequence("Ctrl+R"))
+        self._act_ref_points.setToolTip(
+            "Enter machine coordinates as reference points; two points define the working area"
+        )
+        machine_menu.addAction(self._act_ref_points)
+
+        machine_menu.addSeparator()
         self._act_serial_settings = QAction("Serial &Settings…", self)
         machine_menu.addAction(self._act_serial_settings)
 
@@ -468,6 +477,7 @@ class MainWindow(QMainWindow):
         self._act_send.triggered.connect(self._on_send)
         self._act_send_from.triggered.connect(self._on_send_from)
         self._act_send_sel.triggered.connect(self._on_send_selected)
+        self._act_ref_points.triggered.connect(self._on_ref_points)
         self._act_serial_settings.triggered.connect(self._on_serial_settings)
 
         self._canvas.object_selected.connect(self._on_canvas_select)
@@ -2142,6 +2152,13 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     # Misc
+
+    def _on_ref_points(self):
+        from app.gui.dialogs.ref_points_dialog import RefPointsDialog
+        dlg = RefPointsDialog(self._project, self)
+        dlg.exec()
+        self._canvas.update()
+        self._update_title()
 
     def _on_serial_settings(self):
         from app.gui.dialogs.serial_dialog import SerialSettingsDialog
