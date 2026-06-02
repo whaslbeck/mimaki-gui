@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLineEdit,
-    QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QVBoxLayout,
+    QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QVBoxLayout, QLabel,
 )
 
 from app.config import SerialConfig
@@ -54,16 +54,64 @@ class SerialSettingsDialog(QDialog):
             self._stopbits.setCurrentIndex(idx)
         form.addRow("Stop bits", self._stopbits)
 
+        self._rtscts = QCheckBox("Hardware flow control (RTS/CTS)")
+        self._rtscts.setChecked(self._config.rtscts)
+        self._rtscts.setToolTip(
+            "Enable if the cable has RTS/CTS wired and the machine supports it.\n"
+            "The machine asserts CTS when its buffer is full — the most reliable\n"
+            "flow-control method, requiring no software workarounds."
+        )
+        form.addRow("", self._rtscts)
+
+        # ── Synchronisation ──
+        form.addRow(QLabel(""))   # spacer
+
+        self._sync_mode = QComboBox()
+        self._sync_mode.addItem(
+            "Time-based throttle  (no machine feedback)", "throttle"
+        )
+        self._sync_mode.addItem(
+            "OS; query  (experimental — waits for machine response)", "os_query"
+        )
+        idx = self._sync_mode.findData(self._config.sync_mode)
+        if idx >= 0:
+            self._sync_mode.setCurrentIndex(idx)
+        self._sync_mode.setToolTip(
+            "Throttle: waits estimated move duration × factor — blind, no machine feedback.\n\n"
+            "OS; query: inserts OS; into the HPGL stream every N commands and blocks\n"
+            "until the machine responds. OS; is queued sequentially, so the response\n"
+            "arrives only after all preceding commands have been executed.\n"
+            "With N=1 the machine buffer is always empty when the PC waits,\n"
+            "giving near-real-time pause/stop accuracy and exact resume position."
+        )
+        self._sync_mode.currentIndexChanged.connect(self._on_sync_changed)
+        form.addRow("Sync mode:", self._sync_mode)
+
         self._throttle = QDoubleSpinBox()
         self._throttle.setRange(0.1, 2.0)
         self._throttle.setSingleStep(0.05)
         self._throttle.setDecimals(2)
         self._throttle.setValue(self._config.throttle_factor)
-        form.addRow("Throttle factor", self._throttle)
+        self._throttle.setToolTip(
+            "Multiplier applied to the estimated move duration.\n"
+            "< 1.0 = faster (risk of buffer overflow)\n"
+            "> 1.0 = slower (safer margin)"
+        )
+        form.addRow("Throttle factor:", self._throttle)
 
-        self._zi_sync = QCheckBox("Use ZI synchronisation (experimental)")
-        self._zi_sync.setChecked(self._config.use_zi_sync)
-        form.addRow("", self._zi_sync)
+        self._os_interval = QSpinBox()
+        self._os_interval.setRange(1, 500)
+        self._os_interval.setValue(self._config.os_sync_interval)
+        self._os_interval.setToolTip(
+            "N=1 (recommended): after every single HPGL command.\n"
+            "  → Machine buffer is always empty when PC waits.\n"
+            "  → Pause/Stop take effect within one move's execution time.\n"
+            "  → Last confirmed position is exact (useful after tool break).\n"
+            "  → Round-trip overhead ≈ 10–20 ms — negligible at cutting speeds.\n\n"
+            "N>1: reduce OS; queries for very fast machines or high move counts.\n"
+            "  Machine can be up to N commands ahead of the PC."
+        )
+        form.addRow("Look-ahead (moves):", self._os_interval)
 
         layout.addLayout(form)
 
@@ -75,6 +123,13 @@ class SerialSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        self._on_sync_changed()
+
+    def _on_sync_changed(self):
+        mode = self._sync_mode.currentData()
+        self._throttle.setEnabled(mode == "throttle")
+        self._os_interval.setEnabled(mode == "os_query")
+
     def get_config(self) -> SerialConfig:
         return SerialConfig(
             port=self._port.text().strip(),
@@ -82,6 +137,8 @@ class SerialSettingsDialog(QDialog):
             bytesize=self._bytesize.currentData(),
             parity=self._parity.currentData(),
             stopbits=self._stopbits.currentData(),
+            rtscts=self._rtscts.isChecked(),
+            sync_mode=self._sync_mode.currentData(),
             throttle_factor=self._throttle.value(),
-            use_zi_sync=self._zi_sync.isChecked(),
+            os_sync_interval=self._os_interval.value(),
         )

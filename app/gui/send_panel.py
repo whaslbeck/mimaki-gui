@@ -76,6 +76,10 @@ class SendPanel(QWidget):
         self._lbl_remaining = QLabel("Remaining: --:--:--")
         ctrl.addWidget(self._lbl_remaining)
 
+        self._lbl_confirmed = QLabel()
+        self._lbl_confirmed.setStyleSheet("color:#555; font-size:10px;")
+        ctrl.addWidget(self._lbl_confirmed)
+
         ctrl.addStretch()
         layout.addLayout(ctrl, 1)
 
@@ -109,6 +113,11 @@ class SendPanel(QWidget):
         self._btn_stop.setEnabled(active)
         if not active:
             self._btn_pause.setChecked(False)
+            self._lbl_confirmed.clear()
+
+    def set_confirmed(self, index: int):
+        """Show the last OS;-confirmed move index (0-based)."""
+        self._lbl_confirmed.setText(f"Confirmed executed: move {index + 1}")
 
     def set_progress(self, sent: int, total: int):
         self._progress.setMaximum(max(1, total))

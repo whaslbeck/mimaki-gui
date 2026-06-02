@@ -24,8 +24,13 @@ class SerialConfig:
     bytesize: int = 8
     parity: str = "N"
     stopbits: int = 1
-    use_zi_sync: bool = False
+    rtscts: bool = False
+    # sync_mode: "throttle" | "os_query"
+    # "throttle"  — time-based delay (simple, no machine feedback)
+    # "os_query"  — insert OS;\n every N moves; wait for response before continuing
+    sync_mode: str = "throttle"
     throttle_factor: float = 0.8
+    os_sync_interval: int = 10   # moves between OS; queries (os_query mode only)
 
 
 @dataclass

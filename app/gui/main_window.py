@@ -49,6 +49,7 @@ class MainWindow(QMainWindow):
         self._setup_toolbar()
         self._setup_shortcuts()
         self._connect_signals()
+        self._act_feed_calc.triggered.connect(self._on_feed_calc_toggle)
 
         self._canvas.set_project(self._project)
         self._object_panel.set_project(self._project)
@@ -204,6 +205,13 @@ class MainWindow(QMainWindow):
             Qt.DockWidgetArea.TopDockWidgetArea
         )
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, send_dock)
+
+        # Feed calculator — standalone top-level window (avoids Wayland dock/popup issues)
+        from app.gui.feed_calc_widget import FeedCalcWidget
+        self._feed_calc = FeedCalcWidget(self._config)
+        self._feed_calc.setWindowFlag(Qt.WindowType.Window)
+        self._feed_calc.setWindowTitle("Feed Calculator")
+        self._feed_calc.resize(820, 460)
 
         # Status bar
         self._status_bar = QStatusBar()
@@ -428,6 +436,10 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tb.addAction(self._act_send)
         tb.addAction(self._act_send_sel)
+        tb.addSeparator()
+        self._act_feed_calc = tb.addAction("Feed Calc")
+        self._act_feed_calc.setCheckable(True)
+        self._act_feed_calc.setToolTip("Toggle milling parameter calculator (feed rate & spindle speed)")
 
     # ------------------------------------------------------------------
     # Shortcuts
@@ -510,7 +522,13 @@ class MainWindow(QMainWindow):
         self._send_panel.resume_requested.connect(self._on_resume)
         self._send_panel.stop_requested.connect(self._on_stop)
 
+        self._feed_calc.apply_requested.connect(self._on_feed_calc_apply)
+        self._feed_calc.window_closed.connect(
+            lambda: self._act_feed_calc.setChecked(False)
+        )
+
         self._sender.progress.connect(self._on_send_progress)
+        self._sender.confirmed_index.connect(self._on_move_confirmed)
         self._sender.line_sent.connect(self._send_panel.append_log)
         self._sender.job_finished.connect(self._on_job_finished)
         self._sender.job_stopped.connect(self._on_job_stopped)
@@ -1293,6 +1311,7 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             self._config.tool_presets = dlg.get_presets()
             self._config.save()
+            self._feed_calc.refresh_tools()
             applied = dlg.get_applied_preset()
             if applied is not None:
                 spd = self._project.speeds
@@ -1519,6 +1538,7 @@ class MainWindow(QMainWindow):
                 bytesize=sc.bytesize,
                 parity=sc.parity,
                 stopbits=sc.stopbits,
+                rtscts=sc.rtscts,
                 timeout=2,
             )
             self._send_panel.set_connected(True)
@@ -1697,7 +1717,8 @@ class MainWindow(QMainWindow):
             moves=moves,
             speeds=self._project.speeds,
             throttle_factor=self._config.serial.throttle_factor,
-            use_zi_sync=self._config.serial.use_zi_sync,
+            sync_mode=self._config.serial.sync_mode,
+            os_sync_interval=self._config.serial.os_sync_interval,
             offset_x=self._project.work_offset_x,
             offset_y=self._project.work_offset_y,
         )
@@ -1732,6 +1753,11 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     # Sender callbacks
+
+    @pyqtSlot(int)
+    def _on_move_confirmed(self, index: int):
+        """OS; response received — machine has finished move #index."""
+        self._send_panel.set_confirmed(index)
 
     @pyqtSlot(int, int)
     def _on_send_progress(self, sent: int, total: int):
@@ -2152,6 +2178,24 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     # Misc
+
+    def _on_feed_calc_toggle(self, checked: bool):
+        if checked:
+            self._feed_calc.show()
+            self._feed_calc.raise_()
+        else:
+            self._feed_calc.hide()
+
+    @pyqtSlot(float)
+    def _on_feed_calc_apply(self, vf_mm_min: float):
+        self._project.speeds.xy_machining_mm_min = vf_mm_min
+        self._sync_speed_spinboxes()
+        self._update_duration()
+        self._project.modified = True
+        self._update_title()
+        self._status_bar.showMessage(
+            f"XY machining speed set to {vf_mm_min / 60:.1f} mm/s from feed calculator"
+        )
 
     def _on_ref_points(self):
         from app.gui.dialogs.ref_points_dialog import RefPointsDialog
