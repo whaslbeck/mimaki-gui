@@ -43,6 +43,9 @@ class MainWindow(QMainWindow):
         self._sender = SerialSender(self)
         self._job_start_time: float = 0.0
         self._job_move_count: int = 0
+        self._current_send_moves: list = []
+        self._last_confirmed_index: int = -1
+        self._cutter_retracted: bool = False
 
         self._setup_ui()
         self._setup_menu()
@@ -529,6 +532,7 @@ class MainWindow(QMainWindow):
 
         self._sender.progress.connect(self._on_send_progress)
         self._sender.confirmed_index.connect(self._on_move_confirmed)
+        self._sender.retracted.connect(self._on_cutter_retracted)
         self._sender.line_sent.connect(self._send_panel.append_log)
         self._sender.job_finished.connect(self._on_job_finished)
         self._sender.job_stopped.connect(self._on_job_stopped)
@@ -1701,6 +1705,14 @@ class MainWindow(QMainWindow):
             for obj in self._project.visible_objects():
                 moves.extend(obj.computed_moves)
 
+        # Apply Z-layer filter (same set shown on canvas)
+        z_filter = self._canvas.z_filter
+        if z_filter is not None:
+            moves = [
+                m for m in moves
+                if not m.pen_down or round(m.to_pos.z, 2) in z_filter
+            ]
+
         moves = moves[start_index:]
         if not moves:
             QMessageBox.information(self, "Send", "No moves to send.")
@@ -1711,6 +1723,9 @@ class MainWindow(QMainWindow):
         self._send_panel.set_sending(True)
         self._job_start_time = time.time()
         self._job_move_count = len(moves)
+        self._current_send_moves = moves
+        self._last_confirmed_index = -1
+        self._cutter_retracted = False
 
         self._sender.configure(
             port=self._serial_port,
@@ -1745,7 +1760,18 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def _on_resume(self):
-        self._sender.resume()
+        if self._cutter_retracted and self._current_send_moves:
+            from app.gui.dialogs.resume_dialog import ResumeDialog
+            dlg = ResumeDialog(
+                moves=self._current_send_moves,
+                confirmed_index=self._last_confirmed_index,
+                parent=self,
+            )
+            if not dlg.exec():
+                return   # user cancelled — stay paused
+            self._sender.resume_from(dlg.get_resume_index())
+        else:
+            self._sender.resume()
 
     @pyqtSlot()
     def _on_stop(self):
@@ -1756,8 +1782,12 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(int)
     def _on_move_confirmed(self, index: int):
-        """OS; response received — machine has finished move #index."""
+        self._last_confirmed_index = index
         self._send_panel.set_confirmed(index)
+
+    @pyqtSlot(bool)
+    def _on_cutter_retracted(self, is_retracted: bool):
+        self._cutter_retracted = is_retracted
 
     @pyqtSlot(int, int)
     def _on_send_progress(self, sent: int, total: int):

@@ -173,6 +173,11 @@ class WorkCanvas(QWidget):
         self._z_filter_set = depths
         self.update()
 
+    @property
+    def z_filter(self) -> Optional[frozenset]:
+        """Current Z-layer filter (None = all depths allowed)."""
+        return self._z_filter_set
+
     def start_animation(self, moves: list[Move], speed: int = 1):
         self.stop_animation()
         self._anim_moves = list(moves)
