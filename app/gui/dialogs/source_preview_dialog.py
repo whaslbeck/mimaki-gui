@@ -17,7 +17,7 @@ class SourcePreviewDialog(QDialog):
 
     def __init__(self, obj: GcodeObject, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Quellcode — {obj.label}")
+        self.setWindowTitle(f"Source — {obj.label}")
         self.resize(760, 560)
         self._setup_ui(obj)
 
@@ -26,15 +26,15 @@ class SourcePreviewDialog(QDialog):
         layout.setSpacing(4)
 
         # Header
-        layout.addWidget(QLabel(f"Datei: {obj.source_file}"))
+        layout.addWidget(QLabel(f"File: {obj.source_file}"))
 
         # Search bar
         search_row = QHBoxLayout()
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Suchen…")
+        self._search.setPlaceholderText("Search…")
         self._search.returnPressed.connect(self._find_next)
         search_row.addWidget(self._search, 1)
-        btn_find = QPushButton("Weiter")
+        btn_find = QPushButton("Find Next")
         btn_find.clicked.connect(self._find_next)
         search_row.addWidget(btn_find)
         layout.addLayout(search_row)
@@ -55,17 +55,17 @@ class SourcePreviewDialog(QDialog):
             self._editor.setPlainText(text)
             if truncated:
                 self._editor.appendPlainText(
-                    f"\n… (Datei gekürzt — nur erste {_MAX_LINES:,} Zeilen angezeigt)"
+                    f"\n… (file truncated — showing first {_MAX_LINES:,} lines only)"
                 )
         except OSError as e:
-            self._editor.setPlainText(f"Fehler beim Öffnen:\n{e}")
+            self._editor.setPlainText(f"Error opening file:\n{e}")
 
         # Buttons
         btn_row = QHBoxLayout()
-        self._lbl_info = QLabel(f"{len(lines):,} Zeilen")
+        self._lbl_info = QLabel(f"{len(lines):,} lines")
         btn_row.addWidget(self._lbl_info)
         btn_row.addStretch()
-        btn_close = QPushButton("Schließen")
+        btn_close = QPushButton("Close")
         btn_close.clicked.connect(self.accept)
         btn_row.addWidget(btn_close)
         layout.addLayout(btn_row)

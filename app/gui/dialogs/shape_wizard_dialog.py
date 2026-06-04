@@ -44,9 +44,9 @@ class ShapeWizardDialog(QDialog):
         # ---- Operation ----
         op_box = QGroupBox("Operation")
         op_layout = QVBoxLayout(op_box)
-        self._rb_cont_out = QRadioButton("Contour — outside (Außenkontur)")
-        self._rb_cont_in  = QRadioButton("Contour — inside (Innenkontur / Ausschnitt)")
-        self._rb_pocket   = QRadioButton("Pocket / Facing (Tasche / Planfräsen)")
+        self._rb_cont_out = QRadioButton("Contour — outside")
+        self._rb_cont_in  = QRadioButton("Contour — inside (cutout)")
+        self._rb_pocket   = QRadioButton("Pocket / Facing")
         self._rb_cont_out.setChecked(True)
         op_layout.addWidget(self._rb_cont_out)
         op_layout.addWidget(self._rb_cont_in)

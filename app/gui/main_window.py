@@ -84,7 +84,7 @@ class MainWindow(QMainWindow):
         obj_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._object_panel = ObjectPanel()
         obj_scroll.setWidget(self._object_panel)
-        right_tabs.addTab(obj_scroll, "Objekte")
+        right_tabs.addTab(obj_scroll, "Objects")
 
         # ── Tab 2: Einstellungen ──
         settings_scroll = QScrollArea()
@@ -153,12 +153,12 @@ class MainWindow(QMainWindow):
 
         # Z-Layer filter
         self._z_depths: list[float] = []   # shallowest first, round 2dp
-        self._z_filter_box = QGroupBox("Z-Ebenen-Filter")
+        self._z_filter_box = QGroupBox("Z-Layer Filter")
         z_filter_layout = QVBoxLayout(self._z_filter_box)
         z_filter_layout.setSpacing(4)
 
         z_slider_row = QHBoxLayout()
-        z_slider_row.addWidget(QLabel("Schnell:"))
+        z_slider_row.addWidget(QLabel("Quick:"))
         self._z_slider = QSlider(Qt.Orientation.Horizontal)
         self._z_slider.setMinimum(0)
         self._z_slider.setMaximum(0)
@@ -166,12 +166,12 @@ class MainWindow(QMainWindow):
         self._z_slider.setTickInterval(1)
         self._z_slider.valueChanged.connect(self._on_z_slider_changed)
         z_slider_row.addWidget(self._z_slider, 1)
-        self._z_slider_label = QLabel("Alle")
+        self._z_slider_label = QLabel("All")
         self._z_slider_label.setMinimumWidth(110)
         z_slider_row.addWidget(self._z_slider_label)
-        btn_z_all = QPushButton("Alle")
+        btn_z_all = QPushButton("All")
         btn_z_all.setFixedWidth(40)
-        btn_z_all.setToolTip("Alle Z-Ebenen anzeigen")
+        btn_z_all.setToolTip("Show all Z layers")
         btn_z_all.clicked.connect(self._z_filter_reset)
         z_slider_row.addWidget(btn_z_all)
         z_filter_layout.addLayout(z_slider_row)
@@ -193,7 +193,7 @@ class MainWindow(QMainWindow):
         settings_layout.addStretch()
 
         settings_scroll.setWidget(settings_inner)
-        right_tabs.addTab(settings_scroll, "Einstellungen")
+        right_tabs.addTab(settings_scroll, "Settings")
 
         splitter.addWidget(right_tabs)
         splitter.setSizes([900, 340])
@@ -347,7 +347,7 @@ class MainWindow(QMainWindow):
         )
         view_menu.addAction(self._act_depth_color)
 
-        self._act_preview_3d = QAction("&3D-Vorschau…", self)
+        self._act_preview_3d = QAction("&3D Preview…", self)
         self._act_preview_3d.setShortcut(QKeySequence("Ctrl+3"))
         view_menu.addAction(self._act_preview_3d)
 
@@ -1219,7 +1219,7 @@ class MainWindow(QMainWindow):
     def _on_preview_3d(self):
         vis = self._project.visible_objects()
         if not vis:
-            QMessageBox.information(self, "3D-Vorschau", "Keine sichtbaren Objekte.")
+            QMessageBox.information(self, "3D Preview", "No visible objects.")
             return
         moves: list = []
         for obj in vis:
@@ -1438,7 +1438,7 @@ class MainWindow(QMainWindow):
         self._z_slider.setTickInterval(1)
         self._z_slider.setValue(n - 1)
         self._z_slider.blockSignals(False)
-        self._z_slider_label.setText("Alle Ebenen")
+        self._z_slider_label.setText("All layers")
 
         # Checklist
         self._z_layer_list.blockSignals(True)
@@ -1471,11 +1471,11 @@ class MainWindow(QMainWindow):
         # Canvas + label
         if idx == n - 1:
             self._canvas.set_z_filter(None)
-            self._z_slider_label.setText("Alle Ebenen")
+            self._z_slider_label.setText("All layers")
         else:
             self._canvas.set_z_filter(show)
             self._z_slider_label.setText(
-                f"bis {self._z_depths[idx]:.2f} mm  ({idx + 1}/{n})"
+                f"up to {self._z_depths[idx]:.2f} mm  ({idx + 1}/{n})"
             )
 
     def _on_z_item_changed(self, _item):
@@ -1491,7 +1491,7 @@ class MainWindow(QMainWindow):
         n = len(self._z_depths)
         if len(checked) == n:
             self._canvas.set_z_filter(None)
-            self._z_slider_label.setText("Alle Ebenen")
+            self._z_slider_label.setText("All layers")
             self._z_slider.blockSignals(True)
             self._z_slider.setValue(n - 1)
             self._z_slider.blockSignals(False)
@@ -1511,13 +1511,13 @@ class MainWindow(QMainWindow):
             self._z_slider.setValue(prefix_idx)
             self._z_slider.blockSignals(False)
             self._z_slider_label.setText(
-                f"bis {self._z_depths[prefix_idx]:.2f} mm  ({prefix_idx + 1}/{n})"
+                f"up to {self._z_depths[prefix_idx]:.2f} mm  ({prefix_idx + 1}/{n})"
             )
         else:
             # Non-contiguous selection — leave slider, update label
             self._z_slider_label.setText(
-                f"{len(checked)} von {n} Pässen"
-                + (" (individuell)" if checked else " — keine")
+                f"{len(checked)} of {n} passes"
+                + (" (custom)" if checked else " — none")
             )
 
     def _z_filter_reset(self):
@@ -1583,30 +1583,30 @@ class MainWindow(QMainWindow):
                     maxx, maxy = int(parts[2]), int(parts[3])
                     if maxx != 48300 or maxy != 30500:
                         QMessageBox.warning(
-                            self, "Plottereinheit prüfen",
-                            "Die Maschine scheint nicht auf 0,01 mm (MGL-IIC3) eingestellt zu sein.\n\n"
-                            f"OH-Antwort: {oh_resp!r}\n"
-                            "Erwartet für ME-500 bei 0,01 mm: '0,0,48300,30500'\n\n"
-                            "Bitte Plottereinheit in den Maschineneinstellungen prüfen.",
+                            self, "Check plotter unit",
+                            "Machine does not appear to be set to 0.01 mm (MGL-IIC3).\n\n"
+                            f"OH response: {oh_resp!r}\n"
+                            "Expected for ME-500 at 0.01 mm: '0,0,48300,30500'\n\n"
+                            "Please check the plotter unit in the machine settings.",
                         )
                 except ValueError:
                     QMessageBox.warning(
-                        self, "Plottereinheit",
-                        f"OH-Antwort konnte nicht ausgewertet werden: {oh_resp!r}",
+                        self, "Plotter Unit",
+                        f"Could not parse OH response: {oh_resp!r}",
                     )
             else:
                 QMessageBox.warning(
-                    self, "Plottereinheit",
-                    f"OH-Antwort hat unerwartetes Format: {oh_resp!r}\n"
-                    "Erwartet: 'minx,miny,maxx,maxy'",
+                    self, "Plotter Unit",
+                    f"Unexpected OH response format: {oh_resp!r}\n"
+                    "Expected: 'minx,miny,maxx,maxy'",
                 )
 
         zi_resp = _read_response(b"ZI;\n")
         if zi_resp and "ME500" not in zi_resp:
             QMessageBox.warning(
                 self, "Machine Check",
-                f"Unbekannte Maschine — erwartet 'ME500', erhalten: {zi_resp!r}\n\n"
-                "Bitte Verbindung und Einstellungen prüfen.",
+                f"Unknown machine — expected 'ME500', got: {zi_resp!r}\n\n"
+                "Please check connection and settings.",
             )
 
     @pyqtSlot()
@@ -1686,10 +1686,10 @@ class MainWindow(QMainWindow):
 
         # Pre-send checklist
         reply = QMessageBox.question(
-            self, "Vor dem Senden bestätigen",
-            "Bitte vor dem Start sicherstellen:\n\n"
-            "  •  Z-Achse auf Oberflächen-Nullpunkt kalibriert?\n"
-            "  •  X/Y auf Ursprung 0 / 0 eingestellt?",
+            self, "Confirm before sending",
+            "Please confirm before starting:\n\n"
+            "  •  Z-axis zeroed to material surface?\n"
+            "  •  X/Y origin set to 0 / 0?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
@@ -2075,10 +2075,10 @@ class MainWindow(QMainWindow):
         sp_y = _spin(-500, 500, zone.y)
         sp_w = _spin(0.1, 1000, zone.width)
         sp_h = _spin(0.1, 1000, zone.height)
-        form.addRow("X (links):", sp_x)
-        form.addRow("Y (unten):", sp_y)
-        form.addRow("Breite:", sp_w)
-        form.addRow("Höhe:", sp_h)
+        form.addRow("X (left):", sp_x)
+        form.addRow("Y (bottom):", sp_y)
+        form.addRow("Width:", sp_w)
+        form.addRow("Height:", sp_h)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel

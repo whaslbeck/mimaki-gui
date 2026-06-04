@@ -506,7 +506,7 @@ class ObjectPanel(QWidget):
         if z_set:
             z_sorted = sorted(z_set)
             self._lbl_z_range.setText(
-                f"{z_sorted[0]:.2f} … {z_sorted[-1]:.2f} mm  ({len(z_set)} Pässe)"
+                f"{z_sorted[0]:.2f} … {z_sorted[-1]:.2f} mm  ({len(z_set)} passes)"
             )
         else:
             self._lbl_z_range.setText("—")

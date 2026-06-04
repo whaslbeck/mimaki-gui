@@ -39,7 +39,7 @@ class CommentsDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        btn_close = QPushButton("Schließen")
+        btn_close = QPushButton("Close")
         btn_close.clicked.connect(self.accept)
         btn_row.addWidget(btn_close)
         layout.addLayout(btn_row)

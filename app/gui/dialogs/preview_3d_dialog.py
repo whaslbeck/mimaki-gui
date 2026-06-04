@@ -263,7 +263,7 @@ class _View3DWidget(QWidget):
 class Preview3DDialog(QDialog):
     def __init__(self, moves: list[Move], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("3D-Vorschau")
+        self.setWindowTitle("3D Preview")
         self.resize(860, 640)
         self._setup_ui(moves)
 
@@ -277,7 +277,7 @@ class Preview3DDialog(QDialog):
 
         ctrl = QHBoxLayout()
 
-        chk_travel = QCheckBox("Eilbewegungen anzeigen")
+        chk_travel = QCheckBox("Show travel moves")
         chk_travel.setChecked(False)
         chk_travel.toggled.connect(self._view.set_show_travel)
         ctrl.addWidget(chk_travel)
@@ -290,8 +290,8 @@ class Preview3DDialog(QDialog):
         self._spin_z.setSuffix("×")
         self._spin_z.setValue(10.0)
         self._spin_z.setToolTip(
-            "Vertikale Überhöhung der Z-Tiefe\n"
-            "10× → 1 mm Tiefe erscheint als 10 mm"
+            "Vertical exaggeration of Z depth\n"
+            "10× → 1 mm depth appears as 10 mm"
         )
         self._spin_z.valueChanged.connect(self._view.set_z_scale)
         ctrl.addWidget(self._spin_z)
@@ -300,8 +300,8 @@ class Preview3DDialog(QDialog):
 
         # Preset view buttons
         for label, az, el in [
-            ("Oben", 225, 89),
-            ("Vorne", 270, 5),
+            ("Top", 225, 89),
+            ("Front", 270, 5),
             ("ISO", 225, 25),
         ]:
             btn = QPushButton(label)
@@ -311,7 +311,7 @@ class Preview3DDialog(QDialog):
             )
             ctrl.addWidget(btn)
 
-        btn_reset = QPushButton("Ansicht zurücksetzen")
+        btn_reset = QPushButton("Reset view")
         btn_reset.clicked.connect(self._view.reset_view)
         ctrl.addWidget(btn_reset)
 
