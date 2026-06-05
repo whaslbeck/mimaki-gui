@@ -46,6 +46,7 @@ class MainWindow(QMainWindow):
         self._current_send_moves: list = []
         self._last_confirmed_index: int = -1
         self._cutter_retracted: bool = False
+        self._tool_change_depths: set[float] = set()
 
         self._setup_ui()
         self._setup_menu()
@@ -186,6 +187,10 @@ class MainWindow(QMainWindow):
         self._z_layer_list.setMaximumHeight(110)
         self._z_layer_list.setSpacing(1)
         self._z_layer_list.itemChanged.connect(self._on_z_item_changed)
+        self._z_layer_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._z_layer_list.customContextMenuRequested.connect(
+            self._on_z_layer_context_menu
+        )
         z_filter_layout.addWidget(self._z_layer_list)
 
         self._z_filter_box.setVisible(False)
@@ -524,6 +529,9 @@ class MainWindow(QMainWindow):
         self._send_panel.pause_requested.connect(self._on_pause)
         self._send_panel.resume_requested.connect(self._on_resume)
         self._send_panel.stop_requested.connect(self._on_stop)
+        self._send_panel.jog_requested.connect(self._on_jog)
+        self._send_panel.jog_home_requested.connect(self._on_jog_home)
+        self._send_panel.feed_override_changed.connect(self._on_feed_override_changed)
 
         self._feed_calc.apply_requested.connect(self._on_feed_calc_apply)
         self._feed_calc.window_closed.connect(
@@ -534,6 +542,7 @@ class MainWindow(QMainWindow):
         self._sender.confirmed_index.connect(self._on_move_confirmed)
         self._sender.retracted.connect(self._on_cutter_retracted)
         self._sender.line_sent.connect(self._send_panel.append_log)
+        self._sender.tool_change_required.connect(self._on_tool_change_required)
         self._sender.job_finished.connect(self._on_job_finished)
         self._sender.job_stopped.connect(self._on_job_stopped)
         self._sender.error_occurred.connect(self._on_send_error)
@@ -1426,6 +1435,8 @@ class MainWindow(QMainWindow):
         visible = len(depths) > 1
         self._z_filter_box.setVisible(visible)
         self._canvas.set_z_filter(None)
+        # Drop tool-change marks for depths that no longer exist
+        self._tool_change_depths &= set(depths)
         if not visible:
             return
 
@@ -1440,11 +1451,12 @@ class MainWindow(QMainWindow):
         self._z_slider.blockSignals(False)
         self._z_slider_label.setText("All layers")
 
-        # Checklist
+        # Checklist (right-click to toggle tool-change pause)
         self._z_layer_list.blockSignals(True)
         self._z_layer_list.clear()
         for i, z in enumerate(depths):
-            item = QListWidgetItem(f"Pass {i + 1}  —  {z:.2f} mm")
+            tc = "⚙ " if z in self._tool_change_depths else ""
+            item = QListWidgetItem(f"{tc}Pass {i + 1}  —  {z:.2f} mm")
             item.setData(Qt.ItemDataRole.UserRole, z)
             item.setCheckState(Qt.CheckState.Checked)
             self._z_layer_list.addItem(item)
@@ -1523,6 +1535,29 @@ class MainWindow(QMainWindow):
     def _z_filter_reset(self):
         if self._z_depths:
             self._z_slider.setValue(len(self._z_depths) - 1)
+
+    def _on_z_layer_context_menu(self, pos):
+        from PyQt6.QtWidgets import QMenu
+        item = self._z_layer_list.itemAt(pos)
+        if item is None:
+            return
+        z = item.data(Qt.ItemDataRole.UserRole)
+        menu = QMenu(self)
+        if z in self._tool_change_depths:
+            act = menu.addAction("Remove tool change pause")
+        else:
+            act = menu.addAction("⚙  Add tool change pause before this pass")
+        if menu.exec(self._z_layer_list.mapToGlobal(pos)) == act:
+            if z in self._tool_change_depths:
+                self._tool_change_depths.discard(z)
+            else:
+                self._tool_change_depths.add(z)
+            # Update just this item's label (blockSignals avoids filter re-trigger)
+            self._z_layer_list.blockSignals(True)
+            tc = "⚙ " if z in self._tool_change_depths else ""
+            i = self._z_depths.index(z) + 1
+            item.setText(f"{tc}Pass {i}  —  {z:.2f} mm")
+            self._z_layer_list.blockSignals(False)
 
     # ------------------------------------------------------------------
     # Machine / serial actions
@@ -1713,6 +1748,18 @@ class MainWindow(QMainWindow):
                 if not m.pen_down or round(m.to_pos.z, 2) in z_filter
             ]
 
+        # Dry run: replace all cutting moves with travel-only moves
+        if self._send_panel.is_dry_run():
+            from dataclasses import replace as _dc_replace
+            from app.model.types import Pos as _Pos
+            moves = [
+                _dc_replace(m,
+                    pen_down=False,
+                    z_move=False,
+                    to_pos=_Pos(m.to_pos.x, m.to_pos.y, 0.0))
+                for m in moves
+            ]
+
         moves = moves[start_index:]
         if not moves:
             QMessageBox.information(self, "Send", "No moves to send.")
@@ -1736,6 +1783,7 @@ class MainWindow(QMainWindow):
             os_sync_interval=self._config.serial.os_sync_interval,
             offset_x=self._project.work_offset_x,
             offset_y=self._project.work_offset_y,
+            tool_change_depths=frozenset(self._tool_change_depths),
         )
         self._sender.start()
 
@@ -1784,10 +1832,63 @@ class MainWindow(QMainWindow):
     def _on_move_confirmed(self, index: int):
         self._last_confirmed_index = index
         self._send_panel.set_confirmed(index)
+        if self._current_send_moves and 0 <= index < len(self._current_send_moves):
+            p = self._current_send_moves[index].to_pos
+            self._canvas.set_machining_pos((p.x, p.y, p.z))
 
     @pyqtSlot(bool)
     def _on_cutter_retracted(self, is_retracted: bool):
         self._cutter_retracted = is_retracted
+
+    # ── Jog ───────────────────────────────────────────────────────────
+
+    @pyqtSlot(float, float)
+    def _on_jog(self, dx_mm: float, dy_mm: float):
+        if not self._serial_port or not self._serial_port.is_open:
+            return
+        step = self._send_panel.jog_step()
+        ux = round(dx_mm * step * 100)
+        uy = round(dy_mm * step * 100)
+        self._serial_port.write(f"PU;\nPR{ux},{uy};\n".encode())
+
+    @pyqtSlot()
+    def _on_jog_home(self):
+        if not self._serial_port or not self._serial_port.is_open:
+            return
+        self._serial_port.write(b"PU0,0;\n")
+
+    # ── Feed override ─────────────────────────────────────────────────
+
+    @pyqtSlot(float)
+    def _on_feed_override_changed(self, factor: float):
+        if self._sender.isRunning():
+            self._sender.set_feed_override(factor)
+
+    # ── Tool change ───────────────────────────────────────────────────
+
+    @pyqtSlot(float)
+    def _on_tool_change_required(self, z_depth: float):
+        """Called from sender thread via queued connection when tool change point reached."""
+        self._cutter_retracted = True
+        reply = QMessageBox.question(
+            self,
+            "Tool change",
+            f"Tool change required before pass at Z {z_depth:.2f} mm.\n\n"
+            "Change the tool, re-zero Z if needed, then click OK to continue.\n"
+            "Click Cancel to stop the job.",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Ok,
+        )
+        if reply == QMessageBox.StandardButton.Cancel:
+            self._sender.stop()
+        else:
+            # Resume from the current z-layer start so the plunge is re-executed
+            # with the new tool already at the correct Z reference.
+            from app.gui.dialogs.resume_dialog import _find_z_layer_start
+            idx = _find_z_layer_start(
+                self._current_send_moves, self._last_confirmed_index
+            )
+            self._sender.resume_from(idx)
 
     @pyqtSlot(int, int)
     def _on_send_progress(self, sent: int, total: int):
@@ -1801,18 +1902,21 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def _on_job_finished(self):
+        self._canvas.set_machining_pos(None)
         self._send_panel.set_sending(False)
         self._status_bar.showMessage("Job finished.")
         self._write_log_entry("finished")
 
     @pyqtSlot()
     def _on_job_stopped(self):
+        self._canvas.set_machining_pos(None)
         self._send_panel.set_sending(False)
         self._status_bar.showMessage("Job stopped.")
         self._write_log_entry("stopped")
 
     @pyqtSlot(str)
     def _on_send_error(self, msg: str):
+        self._canvas.set_machining_pos(None)
         self._send_panel.set_sending(False)
         self._write_log_entry("error", msg)
         QMessageBox.critical(self, "Send error", msg)

@@ -88,6 +88,9 @@ class WorkCanvas(QWidget):
         # Z-layer filter: frozenset of allowed depths (round to 2dp); None = show all
         self._z_filter_set: Optional[frozenset] = None
 
+        # live machining position overlay (x, y, z) in world mm; None = hidden
+        self._machining_pos: Optional[tuple[float, float, float]] = None
+
         # dry-run animation
         self._anim_moves: list[Move] = []
         self._anim_index: int = 0
@@ -177,6 +180,11 @@ class WorkCanvas(QWidget):
     def z_filter(self) -> Optional[frozenset]:
         """Current Z-layer filter (None = all depths allowed)."""
         return self._z_filter_set
+
+    def set_machining_pos(self, pos: Optional[tuple[float, float, float]]):
+        """Set live machining position (x, y, z) in world mm. None clears overlay."""
+        self._machining_pos = pos
+        self.update()
 
     def start_animation(self, moves: list[Move], speed: int = 1):
         self.stop_animation()
@@ -268,6 +276,7 @@ class WorkCanvas(QWidget):
         self._draw_preview_marker(painter)
         if self._anim_moves:
             self._draw_animation_cursor(painter)
+        self._draw_machining_cursor(painter)
 
         # Zone preview while drawing
         if self._zone_start and self._zone_current:
@@ -438,6 +447,52 @@ class WorkCanvas(QWidget):
         painter.setPen(QPen(color, 1))
         painter.drawLine(QPointF(sp.x() - r - 3, sp.y()), QPointF(sp.x() + r + 3, sp.y()))
         painter.drawLine(QPointF(sp.x(), sp.y() - r - 3), QPointF(sp.x(), sp.y() + r + 3))
+
+    def _draw_machining_cursor(self, painter: QPainter):
+        if self._machining_pos is None:
+            return
+        x, y, z = self._machining_pos
+        sp = self._w2s(x, y)
+
+        arm = 24          # crosshair arm length in screen pixels
+        gap = 5           # gap around center dot
+        color = QColor("#FFD700")   # gold — distinct from animation cursor colours
+
+        # Crosshair lines (with gap around centre)
+        painter.setPen(QPen(color, 2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawLine(QPointF(sp.x() - arm, sp.y()), QPointF(sp.x() - gap, sp.y()))
+        painter.drawLine(QPointF(sp.x() + gap, sp.y()), QPointF(sp.x() + arm, sp.y()))
+        painter.drawLine(QPointF(sp.x(), sp.y() - arm), QPointF(sp.x(), sp.y() - gap))
+        painter.drawLine(QPointF(sp.x(), sp.y() + gap), QPointF(sp.x(), sp.y() + arm))
+
+        # Centre circle
+        painter.drawEllipse(sp, gap, gap)
+
+        # Coordinate label
+        label = f"X {x:+.2f}  Y {y:+.2f}  Z {z:+.2f}"
+        font = QFont("Monospace", 9)
+        painter.setFont(font)
+        fm = painter.fontMetrics()
+        tw = fm.horizontalAdvance(label)
+        th = fm.height()
+        pad = 4
+
+        # Default: right of crosshair; flip left if near right edge
+        tx = sp.x() + arm + pad
+        if tx + tw + pad > self.width():
+            tx = sp.x() - arm - pad - tw
+        ty = sp.y() + fm.ascent() / 2
+
+        # Semi-transparent background pill
+        bg = QRectF(tx - pad, ty - fm.ascent() - 1, tw + 2 * pad, th + 2)
+        painter.setBrush(QColor(0, 0, 0, 175))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(bg, 3, 3)
+
+        # Text
+        painter.setPen(color)
+        painter.drawText(QPointF(tx, ty), label)
 
     def _get_obj_paths(
         self, obj: GcodeObject

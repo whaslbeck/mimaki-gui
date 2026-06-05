@@ -12,13 +12,14 @@ _OS_RESPONSE_TIMEOUT = 120.0
 
 
 class SerialSender(QThread):
-    progress        = pyqtSignal(int, int)  # sent_count, total_count
-    confirmed_index = pyqtSignal(int)       # last OS;-confirmed move index (0-based)
-    line_sent       = pyqtSignal(str)       # hpgl line or status message for log
-    retracted       = pyqtSignal(bool)      # True = cutter raised (PU;), False = re-engaged
-    job_finished    = pyqtSignal()
-    job_stopped     = pyqtSignal()
-    error_occurred  = pyqtSignal(str)
+    progress             = pyqtSignal(int, int)  # sent_count, total_count
+    confirmed_index      = pyqtSignal(int)       # last OS;-confirmed move index (0-based)
+    line_sent            = pyqtSignal(str)       # hpgl line or status message for log
+    retracted            = pyqtSignal(bool)      # True = cutter raised (PU;), False = re-engaged
+    tool_change_required = pyqtSignal(float)     # z-depth that triggered a tool-change pause
+    job_finished         = pyqtSignal()
+    job_stopped          = pyqtSignal()
+    error_occurred       = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -36,6 +37,10 @@ class SerialSender(QThread):
         self._init_sent: bool = False   # guard: send IN/VS/VZ only once per job
         self._last_confirmed_move: Optional[Move] = None
         self._last_sent_move: Optional[Move] = None
+        self._tool_change_depths: frozenset = frozenset()
+        self._tool_change_triggered: set[float] = set()
+        self._feed_override: float = 1.0
+        self._feed_override_changed: bool = False
 
     def configure(
         self,
@@ -47,6 +52,7 @@ class SerialSender(QThread):
         os_sync_interval: int = 1,
         offset_x: float = 0.0,
         offset_y: float = 0.0,
+        tool_change_depths: frozenset = frozenset(),
     ):
         self._port = port
         self._moves = moves
@@ -56,12 +62,16 @@ class SerialSender(QThread):
         self._os_interval = max(1, os_sync_interval)
         self._offset_x = offset_x
         self._offset_y = offset_y
+        self._tool_change_depths = tool_change_depths
         self._paused = False
         self._stopped = False
         self._resume_from = -1
         self._init_sent = False
         self._last_confirmed_move = None
         self._last_sent_move = None
+        self._tool_change_triggered = set()
+        self._feed_override = 1.0
+        self._feed_override_changed = False
 
     def pause(self):
         self._paused = True
@@ -75,6 +85,11 @@ class SerialSender(QThread):
         """Resume from a specific move index (e.g. after rewind)."""
         self._resume_from = max(0, index)
         self._paused = False
+
+    def set_feed_override(self, factor: float):
+        """Multiply machining feed by factor (0.25–4.0). Injects VS; before next move."""
+        self._feed_override = max(0.25, min(4.0, factor))
+        self._feed_override_changed = True
 
     def stop(self):
         self._stopped = True
@@ -113,6 +128,40 @@ class SerialSender(QThread):
                         i = self._resume_from
                         self._resume_from = -1
                         continue   # restart loop from new index (no i += 1)
+
+                # ── Tool-change pause ─────────────────────────────────
+                z_key = round(move.to_pos.z, 2)
+                if (move.z_move and move.pen_down and
+                        z_key in self._tool_change_depths and
+                        z_key not in self._tool_change_triggered):
+                    self._tool_change_triggered.add(z_key)
+                    self._retract_if_cutting()
+                    self.line_sent.emit(
+                        f"[TOOL CHANGE] pausing before pass at Z {z_key:.2f} mm"
+                    )
+                    self.tool_change_required.emit(z_key)
+                    self._paused = True
+                    while self._paused and not self._stopped:
+                        time.sleep(0.05)
+                    if self._stopped:
+                        self._port.write(b"PU;IN;\n")
+                        stopped = True
+                        break
+                    if self._resume_from >= 0:
+                        i = self._resume_from
+                        self._resume_from = -1
+                        continue
+
+                # ── Feed override injection ────────────────────────────
+                if self._feed_override_changed:
+                    new_mms = max(1, round(
+                        self._speeds.xy_machining_mm_min / 60.0 * self._feed_override
+                    ))
+                    self._port.write(f"VS{new_mms};\n".encode())
+                    self.line_sent.emit(
+                        f"[FEED] VS{new_mms}; ({self._feed_override:.0%})"
+                    )
+                    self._feed_override_changed = False
 
                 # ── Send one HPGL command ─────────────────────────────
                 first = not self._init_sent
