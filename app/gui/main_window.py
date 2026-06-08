@@ -47,6 +47,7 @@ class MainWindow(QMainWindow):
         self._last_confirmed_index: int = -1
         self._cutter_retracted: bool = False
         self._tool_change_depths: set[float] = set()
+        self._jog_pos: tuple[float, float] = (0.0, 0.0)   # tracked machine XY (mm)
 
         self._setup_ui()
         self._setup_menu()
@@ -532,6 +533,10 @@ class MainWindow(QMainWindow):
         self._send_panel.jog_requested.connect(self._on_jog)
         self._send_panel.jog_home_requested.connect(self._on_jog_home)
         self._send_panel.feed_override_changed.connect(self._on_feed_override_changed)
+        self._send_panel.save_point_requested.connect(self._on_save_point)
+        self._send_panel.goto_point_requested.connect(self._on_goto_point)
+        self._send_panel.align_point_requested.connect(self._on_align_point)
+        self._send_panel.delete_point_requested.connect(self._on_delete_point)
 
         self._feed_calc.apply_requested.connect(self._on_feed_calc_apply)
         self._feed_calc.window_closed.connect(
@@ -750,6 +755,7 @@ class MainWindow(QMainWindow):
         self._canvas.update()
         self._update_duration()
         self._rebuild_z_layer_list()
+        self._refresh_saved_points()
         self._config.last_project_dir = os.path.dirname(path)
         self._config.add_recent_file(path)
         self._config.save()
@@ -1584,6 +1590,9 @@ class MainWindow(QMainWindow):
             self._status_bar.showMessage(f"Connected to {sc.port} — checking machine…")
             self._check_machine_on_connect()
             self._status_bar.showMessage(f"Connected to {sc.port}")
+            # Assume the operator has homed/zeroed XY at connect time.
+            self._jog_pos = (0.0, 0.0)
+            self._update_jog_display()
         except Exception as e:
             QMessageBox.critical(self, "Connection error", str(e))
             self._send_panel.set_connected(False)
@@ -1650,6 +1659,7 @@ class MainWindow(QMainWindow):
             self._serial_port.close()
         self._serial_port = None
         self._send_panel.set_connected(False)
+        self._canvas.set_jog_pos(None)
         self._status_bar.showMessage("Disconnected")
 
     @pyqtSlot()
@@ -1768,6 +1778,7 @@ class MainWindow(QMainWindow):
         self._send_panel.clear_log()
         self._send_panel.set_progress(0, len(moves))
         self._send_panel.set_sending(True)
+        self._canvas.set_jog_pos(None)   # machining cursor takes over during send
         self._job_start_time = time.time()
         self._job_move_count = len(moves)
         self._current_send_moves = moves
@@ -1842,20 +1853,157 @@ class MainWindow(QMainWindow):
 
     # ── Jog ───────────────────────────────────────────────────────────
 
+    def _update_jog_display(self):
+        """Sync the on-canvas marker and the panel coordinate readout."""
+        x, y = self._jog_pos
+        self._send_panel.set_jog_pos_label(x, y)
+        if self._serial_port and self._serial_port.is_open:
+            self._canvas.set_jog_pos((x, y))
+        else:
+            self._canvas.set_jog_pos(None)
+
+    def _move_to(self, x: float, y: float):
+        """Send an absolute pen-up move to machine coordinates (x, y) in mm.
+
+        Always uses absolute mode (PA) so that a prior relative jog cannot
+        turn a later absolute target into a no-op.
+        """
+        if not self._serial_port or not self._serial_port.is_open:
+            return
+        ux = round(x * 100)
+        uy = round(y * 100)
+        self._serial_port.write(f"PA;\nPU{ux},{uy};\n".encode())
+        self._jog_pos = (ux / 100.0, uy / 100.0)
+        self._update_jog_display()
+
     @pyqtSlot(float, float)
     def _on_jog(self, dx_mm: float, dy_mm: float):
         if not self._serial_port or not self._serial_port.is_open:
             return
         step = self._send_panel.jog_step()
-        ux = round(dx_mm * step * 100)
-        uy = round(dy_mm * step * 100)
-        self._serial_port.write(f"PU;\nPR{ux},{uy};\n".encode())
+        cx, cy = self._jog_pos
+        self._move_to(cx + dx_mm * step, cy + dy_mm * step)
 
     @pyqtSlot()
     def _on_jog_home(self):
-        if not self._serial_port or not self._serial_port.is_open:
+        self._move_to(0.0, 0.0)
+
+    # ── Saved points ──────────────────────────────────────────────────
+
+    def _refresh_saved_points(self):
+        self._send_panel.set_saved_points(
+            [(p.label, p.x, p.y) for p in self._project.saved_points]
+        )
+        self._canvas.update()
+
+    @pyqtSlot()
+    def _on_save_point(self):
+        from app.model.saved_point import SavedPoint
+        x, y = self._jog_pos
+        n = len(self._project.saved_points) + 1
+        pt = SavedPoint(x=x, y=y, label=f"P{n}")
+        self._project.add_saved_point(pt)
+        self._refresh_saved_points()
+        self._update_title()
+
+    @pyqtSlot(int)
+    def _on_goto_point(self, index: int):
+        if not (0 <= index < len(self._project.saved_points)):
             return
-        self._serial_port.write(b"PU0,0;\n")
+        if not self._serial_port or not self._serial_port.is_open:
+            QMessageBox.warning(self, "Go to point", "Not connected to machine.")
+            return
+        pt = self._project.saved_points[index]
+        self._move_to(pt.x, pt.y)
+
+    @pyqtSlot(int)
+    def _on_delete_point(self, index: int):
+        if not (0 <= index < len(self._project.saved_points)):
+            return
+        self._project.remove_saved_point(self._project.saved_points[index].id)
+        self._refresh_saved_points()
+        self._update_title()
+
+    @pyqtSlot(int)
+    def _on_align_point(self, index: int):
+        if not (0 <= index < len(self._project.saved_points)):
+            return
+        vis = self._project.visible_objects()
+        if not vis:
+            QMessageBox.information(self, "Align", "No visible objects to align.")
+            return
+        pt = self._project.saved_points[index]
+
+        # Choose which geometry reference should land on the saved point
+        refs = {
+            "Bottom-left corner": "bl",
+            "Bottom-right corner": "br",
+            "Top-left corner": "tl",
+            "Top-right corner": "tr",
+            "Center": "center",
+        }
+        choice, ok = QInputDialog.getItem(
+            self, "Align workpiece",
+            f"Move the workpiece so its … sits on point {index + 1} "
+            f"({pt.x:.1f} / {pt.y:.1f}):",
+            list(refs.keys()), 0, False,
+        )
+        if not ok:
+            return
+        ref = refs[choice]
+
+        min_x = min(o.bounding_box.min_x for o in vis)
+        min_y = min(o.bounding_box.min_y for o in vis)
+        max_x = max(o.bounding_box.max_x for o in vis)
+        max_y = max(o.bounding_box.max_y for o in vis)
+        ref_x = {"bl": min_x, "br": max_x, "tl": min_x, "tr": max_x,
+                 "center": (min_x + max_x) / 2}[ref]
+        ref_y = {"bl": min_y, "br": min_y, "tl": max_y, "tr": max_y,
+                 "center": (min_y + max_y) / 2}[ref]
+
+        # Shift every object so the chosen reference physically lands on the
+        # point. The machine position of a world point is (world + work_offset),
+        # so the new world reference must be (point - work_offset).
+        dx = (pt.x - self._project.work_offset_x) - ref_x
+        dy = (pt.y - self._project.work_offset_y) - ref_y
+        if dx == 0.0 and dy == 0.0:
+            return
+        old_transforms = {o.id: o.transform.copy() for o in self._project.objects}
+        for obj in self._project.objects:
+            obj.transform.offset_x += dx
+            obj.transform.offset_y += dy
+            obj._invalidate()
+        new_transforms = {o.id: o.transform.copy() for o in self._project.objects}
+        self._project.modified = True
+        self._canvas.update()
+        self._object_panel.refresh_list()
+        self._object_panel.refresh_props()
+        self._update_title()
+
+        def undo_align():
+            for obj in self._project.objects:
+                if obj.id in old_transforms:
+                    obj.transform = old_transforms[obj.id].copy()
+                    obj._invalidate()
+            self._project.modified = True
+            self._canvas.update()
+            self._object_panel.refresh_list()
+            self._object_panel.refresh_props()
+            self._update_undo_actions()
+
+        def redo_align():
+            for obj in self._project.objects:
+                if obj.id in new_transforms:
+                    obj.transform = new_transforms[obj.id].copy()
+                    obj._invalidate()
+            self._project.modified = True
+            self._canvas.update()
+            self._object_panel.refresh_list()
+            self._object_panel.refresh_props()
+            self._update_undo_actions()
+
+        self._undo.push(undo_align, redo_align, "Align to point")
+        self._update_undo_actions()
 
     # ── Feed override ─────────────────────────────────────────────────
 
@@ -1904,6 +2052,7 @@ class MainWindow(QMainWindow):
     def _on_job_finished(self):
         self._canvas.set_machining_pos(None)
         self._send_panel.set_sending(False)
+        self._update_jog_display()
         self._status_bar.showMessage("Job finished.")
         self._write_log_entry("finished")
 
@@ -1911,6 +2060,7 @@ class MainWindow(QMainWindow):
     def _on_job_stopped(self):
         self._canvas.set_machining_pos(None)
         self._send_panel.set_sending(False)
+        self._update_jog_display()
         self._status_bar.showMessage("Job stopped.")
         self._write_log_entry("stopped")
 
@@ -1918,6 +2068,7 @@ class MainWindow(QMainWindow):
     def _on_send_error(self, msg: str):
         self._canvas.set_machining_pos(None)
         self._send_panel.set_sending(False)
+        self._update_jog_display()
         self._write_log_entry("error", msg)
         QMessageBox.critical(self, "Send error", msg)
 
@@ -2304,6 +2455,7 @@ class MainWindow(QMainWindow):
         self._canvas.update()
         self._update_duration()
         self._rebuild_z_layer_list()
+        self._refresh_saved_points()
         self._config.last_project_dir = os.path.dirname(path)
         self._config.add_recent_file(path)
         self._config.save()

@@ -4,6 +4,7 @@ from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QProgressBar,
     QLabel, QPlainTextEdit, QGroupBox, QCheckBox, QSlider, QSizePolicy,
+    QListWidget, QListWidgetItem,
 )
 
 from app.config import AppConfig
@@ -23,6 +24,10 @@ class SendPanel(QWidget):
     jog_requested          = pyqtSignal(float, float)   # dx_mm, dy_mm
     jog_home_requested     = pyqtSignal()
     feed_override_changed  = pyqtSignal(float)          # factor (1.0 = 100%)
+    save_point_requested   = pyqtSignal()               # capture current jog pos
+    goto_point_requested   = pyqtSignal(int)            # saved-point index
+    align_point_requested  = pyqtSignal(int)            # saved-point index
+    delete_point_requested = pyqtSignal(int)            # saved-point index
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -181,8 +186,54 @@ class SendPanel(QWidget):
         dpad.addStretch()
         jog_vl.addLayout(dpad)
 
+        # Current position readout + capture button
+        pos_row = QHBoxLayout()
+        self._lbl_jog_pos = QLabel("Pos:  X +0.00   Y +0.00")
+        self._lbl_jog_pos.setStyleSheet("font-family: monospace;")
+        pos_row.addWidget(self._lbl_jog_pos)
+        pos_row.addStretch()
+        btn_save_pt = QPushButton("+ Save point")
+        btn_save_pt.setToolTip("Store the current position as a saved point")
+        btn_save_pt.clicked.connect(self.save_point_requested)
+        pos_row.addWidget(btn_save_pt)
+        jog_vl.addLayout(pos_row)
+
         self._jog_group.setVisible(False)
         ctrl.addWidget(self._jog_group)
+
+        # ── Saved points group (always visible — align works offline) ──
+        self._points_group = QGroupBox("Saved points")
+        pts_vl = QVBoxLayout(self._points_group)
+        pts_vl.setSpacing(4)
+        pts_vl.setContentsMargins(6, 4, 6, 4)
+
+        self._pts_list = QListWidget()
+        self._pts_list.setMaximumHeight(90)
+        self._pts_list.itemDoubleClicked.connect(
+            lambda _it: self._emit_for_selected(self.goto_point_requested)
+        )
+        pts_vl.addWidget(self._pts_list)
+
+        pts_btns = QHBoxLayout()
+        btn_goto = QPushButton("Go to")
+        btn_goto.setToolTip("Move the machine to the selected point")
+        btn_goto.clicked.connect(
+            lambda: self._emit_for_selected(self.goto_point_requested)
+        )
+        pts_btns.addWidget(btn_goto)
+        btn_align = QPushButton("Align…")
+        btn_align.setToolTip("Align the workpiece so a chosen reference sits on this point")
+        btn_align.clicked.connect(
+            lambda: self._emit_for_selected(self.align_point_requested)
+        )
+        pts_btns.addWidget(btn_align)
+        btn_del_pt = QPushButton("Delete")
+        btn_del_pt.clicked.connect(
+            lambda: self._emit_for_selected(self.delete_point_requested)
+        )
+        pts_btns.addWidget(btn_del_pt)
+        pts_vl.addLayout(pts_btns)
+        ctrl.addWidget(self._points_group)
 
         ctrl.addStretch()
         top.addLayout(ctrl, 1)
@@ -198,6 +249,11 @@ class SendPanel(QWidget):
 
     # ------------------------------------------------------------------
     # Private
+
+    def _emit_for_selected(self, signal):
+        row = self._pts_list.currentRow()
+        if row >= 0:
+            signal.emit(row)
 
     def _set_jog_step(self, step_mm: float):
         self._jog_step = step_mm
@@ -277,6 +333,21 @@ class SendPanel(QWidget):
 
     def jog_step(self) -> float:
         return self._jog_step
+
+    def set_jog_pos_label(self, x: float, y: float):
+        self._lbl_jog_pos.setText(f"Pos:  X {x:+.2f}   Y {y:+.2f}")
+
+    def set_saved_points(self, points: list):
+        """points = list of (label, x, y); preserves selection by row."""
+        row = self._pts_list.currentRow()
+        self._pts_list.clear()
+        for i, (label, x, y) in enumerate(points):
+            text = f"{i + 1}.  X {x:+.2f}  Y {y:+.2f}"
+            if label:
+                text += f"  — {label}"
+            self._pts_list.addItem(QListWidgetItem(text))
+        if 0 <= row < self._pts_list.count():
+            self._pts_list.setCurrentRow(row)
 
     # ------------------------------------------------------------------
 

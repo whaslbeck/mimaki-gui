@@ -91,6 +91,9 @@ class WorkCanvas(QWidget):
         # live machining position overlay (x, y, z) in world mm; None = hidden
         self._machining_pos: Optional[tuple[float, float, float]] = None
 
+        # live jog position overlay (x, y) in machine mm; None = hidden
+        self._jog_pos: Optional[tuple[float, float]] = None
+
         # dry-run animation
         self._anim_moves: list[Move] = []
         self._anim_index: int = 0
@@ -186,6 +189,11 @@ class WorkCanvas(QWidget):
         self._machining_pos = pos
         self.update()
 
+    def set_jog_pos(self, pos: Optional[tuple[float, float]]):
+        """Set live jog position (x, y) in machine mm. None clears overlay."""
+        self._jog_pos = pos
+        self.update()
+
     def start_animation(self, moves: list[Move], speed: int = 1):
         self.stop_animation()
         self._anim_moves = list(moves)
@@ -273,9 +281,11 @@ class WorkCanvas(QWidget):
         for obj in self._project.visible_objects():
             self._draw_object(painter, obj)
 
+        self._draw_saved_points(painter)
         self._draw_preview_marker(painter)
         if self._anim_moves:
             self._draw_animation_cursor(painter)
+        self._draw_jog_cursor(painter)
         self._draw_machining_cursor(painter)
 
         # Zone preview while drawing
@@ -493,6 +503,68 @@ class WorkCanvas(QWidget):
         # Text
         painter.setPen(color)
         painter.drawText(QPointF(tx, ty), label)
+
+    def _draw_jog_cursor(self, painter: QPainter):
+        if self._jog_pos is None:
+            return
+        x, y = self._jog_pos
+        sp = self._w2s(x, y)
+
+        arm = 20
+        gap = 4
+        color = QColor("#00BFFF")   # deep-sky-blue — distinct from machining gold
+
+        painter.setPen(QPen(color, 2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawLine(QPointF(sp.x() - arm, sp.y()), QPointF(sp.x() - gap, sp.y()))
+        painter.drawLine(QPointF(sp.x() + gap, sp.y()), QPointF(sp.x() + arm, sp.y()))
+        painter.drawLine(QPointF(sp.x(), sp.y() - arm), QPointF(sp.x(), sp.y() - gap))
+        painter.drawLine(QPointF(sp.x(), sp.y() + gap), QPointF(sp.x(), sp.y() + arm))
+        painter.drawEllipse(sp, gap, gap)
+
+        label = f"X {x:+.2f}  Y {y:+.2f}"
+        font = QFont("Monospace", 9)
+        painter.setFont(font)
+        fm = painter.fontMetrics()
+        tw = fm.horizontalAdvance(label)
+        th = fm.height()
+        pad = 4
+        tx = sp.x() + arm + pad
+        if tx + tw + pad > self.width():
+            tx = sp.x() - arm - pad - tw
+        ty = sp.y() + fm.ascent() / 2
+        bg = QRectF(tx - pad, ty - fm.ascent() - 1, tw + 2 * pad, th + 2)
+        painter.setBrush(QColor(0, 0, 0, 175))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(bg, 3, 3)
+        painter.setPen(color)
+        painter.drawText(QPointF(tx, ty), label)
+
+    def _draw_saved_points(self, painter: QPainter):
+        if self._project is None or not self._project.saved_points:
+            return
+        col = QColor("#0077CC")
+        r = 5
+        painter.setFont(QFont("Sans", 8, QFont.Weight.Bold))
+        for i, pt in enumerate(self._project.saved_points):
+            sp = self._w2s(pt.x, pt.y)
+            # Pin: filled circle with a short stem
+            painter.setPen(QPen(col, 1.5))
+            painter.setBrush(QColor(0, 119, 204, 200))
+            painter.drawEllipse(sp, r, r)
+            # Index label inside circle
+            painter.setPen(QPen(QColor("white"), 1))
+            painter.drawText(
+                QRectF(sp.x() - r, sp.y() - r, r * 2, r * 2),
+                int(Qt.AlignmentFlag.AlignCenter),
+                str(i + 1),
+            )
+            # Coordinate caption
+            painter.setPen(QPen(col, 1))
+            painter.setFont(QFont("Sans", 7))
+            cap = (pt.label + "  " if pt.label else "") + f"({pt.x:.1f} / {pt.y:.1f})"
+            painter.drawText(sp + QPointF(r + 3, 3), cap)
+            painter.setFont(QFont("Sans", 8, QFont.Weight.Bold))
 
     def _get_obj_paths(
         self, obj: GcodeObject
