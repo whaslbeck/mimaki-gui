@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         self._object_panel.set_project(self._project)
         self._canvas.set_ui_config(config.ui)
         self._send_panel.set_log_max_lines(config.ui.transmission_log_lines)
+        self._sync_background_controls()
 
         self.setWindowTitle("Mimaki ME-500 GUI")
         self.resize(1280, 820)
@@ -196,6 +197,32 @@ class MainWindow(QMainWindow):
 
         self._z_filter_box.setVisible(False)
         settings_layout.addWidget(self._z_filter_box)
+
+        # Background image
+        bg_box = QGroupBox("Background Image")
+        bg_form = QFormLayout(bg_box)
+        bg_form.setSpacing(3)
+        btn_bg_cal = QPushButton("Load / Calibrate…")
+        btn_bg_cal.clicked.connect(self._on_background_image)
+        bg_form.addRow(btn_bg_cal)
+        self._cmb_bg_mode = QComboBox()
+        from app.model.calibration import DISPLAY_MODES as _DM
+        for m in _DM:
+            self._cmb_bg_mode.addItem(m.capitalize(), m)
+        self._cmb_bg_mode.currentIndexChanged.connect(self._on_bg_mode_changed)
+        bg_form.addRow("Mode:", self._cmb_bg_mode)
+        self._sld_bg_opacity = QSlider(Qt.Orientation.Horizontal)
+        self._sld_bg_opacity.setRange(10, 100)
+        self._sld_bg_opacity.setValue(100)
+        self._sld_bg_opacity.valueChanged.connect(self._on_bg_opacity_changed)
+        bg_form.addRow("Opacity:", self._sld_bg_opacity)
+        from PyQt6.QtWidgets import QCheckBox as _QCheckBox
+        self._chk_bg_points = _QCheckBox("Show calibration points")
+        self._chk_bg_points.toggled.connect(self._on_bg_points_toggled)
+        bg_form.addRow("", self._chk_bg_points)
+        self._bg_box = bg_box
+        settings_layout.addWidget(bg_box)
+
         settings_layout.addStretch()
 
         settings_scroll.setWidget(settings_inner)
@@ -367,6 +394,13 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._act_clear_zones)
 
         view_menu.addSeparator()
+        self._act_background = QAction("&Background Image…", self)
+        self._act_background.setToolTip(
+            "Load and calibrate a photo of the machine bed as a background"
+        )
+        view_menu.addAction(self._act_background)
+
+        view_menu.addSeparator()
         self._act_grid_settings = QAction("Grid &Settings…", self)
         view_menu.addAction(self._act_grid_settings)
 
@@ -479,6 +513,7 @@ class MainWindow(QMainWindow):
         self._act_draw_zone.toggled.connect(self._on_draw_zone_toggle)
         self._act_clear_zones.triggered.connect(self._on_clear_zones)
         self._act_grid_settings.triggered.connect(self._on_grid_settings)
+        self._act_background.triggered.connect(self._on_background_image)
         self._canvas.zone_added.connect(self._on_zone_added)  # now passes zone_id
         self._act_select_all.triggered.connect(self._on_select_all)
         self._act_clone.triggered.connect(self._on_clone)
@@ -756,6 +791,8 @@ class MainWindow(QMainWindow):
         self._update_duration()
         self._rebuild_z_layer_list()
         self._refresh_saved_points()
+        self._canvas.invalidate_background_cache()
+        self._sync_background_controls()
         self._config.last_project_dir = os.path.dirname(path)
         self._config.add_recent_file(path)
         self._config.save()
@@ -851,6 +888,61 @@ class MainWindow(QMainWindow):
             self._project.grid = new_grid
             self._act_toggle_grid.setChecked(new_grid.visible)
             self._canvas.update()
+
+    # ------------------------------------------------------------------
+    # Background image
+
+    def _on_background_image(self):
+        from app.gui.dialogs.background_dialog import BackgroundDialog
+        dlg = BackgroundDialog(self._project, self)
+        if dlg.exec():
+            self._project.background = dlg.get_background()
+            self._project.modified = True
+            self._canvas.invalidate_background_cache()
+            self._canvas.update()
+            self._sync_background_controls()
+            self._update_title()
+
+    def _sync_background_controls(self):
+        """Enable/populate the Settings-tab background controls from the project."""
+        bg = self._project.background
+        from app.model.calibration import DISPLAY_MODES
+        for w in (self._cmb_bg_mode, self._sld_bg_opacity, self._chk_bg_points):
+            w.blockSignals(True)
+        self._bg_box.setEnabled(True)
+        has = bg is not None
+        self._cmb_bg_mode.setEnabled(has)
+        self._sld_bg_opacity.setEnabled(has)
+        self._chk_bg_points.setEnabled(has)
+        if has:
+            self._cmb_bg_mode.setCurrentIndex(DISPLAY_MODES.index(bg.display_mode))
+            self._sld_bg_opacity.setValue(int(bg.opacity * 100))
+            self._chk_bg_points.setChecked(bg.points_visible)
+        for w in (self._cmb_bg_mode, self._sld_bg_opacity, self._chk_bg_points):
+            w.blockSignals(False)
+
+    def _on_bg_mode_changed(self):
+        if self._project.background is None:
+            return
+        self._project.background.display_mode = self._cmb_bg_mode.currentData()
+        self._project.modified = True
+        self._canvas.update()
+        self._update_title()
+
+    def _on_bg_opacity_changed(self, val: int):
+        if self._project.background is None:
+            return
+        self._project.background.opacity = val / 100.0
+        self._project.modified = True
+        self._canvas.update()
+
+    def _on_bg_points_toggled(self, on: bool):
+        if self._project.background is None:
+            return
+        self._project.background.points_visible = on
+        self._project.modified = True
+        self._canvas.update()
+        self._update_title()
 
     # ------------------------------------------------------------------
     # Edit actions
@@ -2456,6 +2548,8 @@ class MainWindow(QMainWindow):
         self._update_duration()
         self._rebuild_z_layer_list()
         self._refresh_saved_points()
+        self._canvas.invalidate_background_cache()
+        self._sync_background_controls()
         self._config.last_project_dir = os.path.dirname(path)
         self._config.add_recent_file(path)
         self._config.save()

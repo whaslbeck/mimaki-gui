@@ -5,7 +5,7 @@ from typing import Optional
 from PyQt6.QtCore import Qt, QPointF, pyqtSignal, QRectF, QPoint, QTimer
 from PyQt6.QtGui import (
     QColor, QPainter, QPainterPath, QPen, QFont, QMouseEvent, QWheelEvent,
-    QContextMenuEvent, QAction, QTransform,
+    QContextMenuEvent, QAction, QTransform, QImage,
 )
 from PyQt6.QtWidgets import QWidget, QToolTip, QMenu
 
@@ -93,6 +93,10 @@ class WorkCanvas(QWidget):
 
         # live jog position overlay (x, y) in machine mm; None = hidden
         self._jog_pos: Optional[tuple[float, float]] = None
+
+        # background-image caches (decoded image + grayscale + pixel->mm transform)
+        self._bg_img_cache: tuple = (None, None, None)   # (b64, QImage, QImage_gray)
+        self._bg_tf_cache: tuple = (None, None)          # (points_sig, QTransform)
 
         # dry-run animation
         self._anim_moves: list[Move] = []
@@ -273,6 +277,7 @@ class WorkCanvas(QWidget):
             return
 
         self._draw_work_area(painter)
+        self._draw_background(painter)
         self._draw_grid(painter)
         self._draw_wcs_marker(painter)
         self._draw_ref_points(painter)
@@ -282,6 +287,7 @@ class WorkCanvas(QWidget):
             self._draw_object(painter, obj)
 
         self._draw_saved_points(painter)
+        self._draw_calibration_points(painter)
         self._draw_preview_marker(painter)
         if self._anim_moves:
             self._draw_animation_cursor(painter)
@@ -320,6 +326,87 @@ class WorkCanvas(QWidget):
         painter.setBrush(QColor("#FFFFFF"))
         painter.setPen(QPen(QColor("#444444"), 2))
         painter.drawRect(rect)
+
+    # ------------------------------------------------------------------
+    # Background image
+
+    def _bg_qimage(self, bg):
+        """Return (image, gray_image) decoded from the background, cached."""
+        if self._bg_img_cache[0] != bg.image_b64:
+            from app.model.calibration import decode_image
+            img = decode_image(bg.image_b64)
+            gray = (img.convertToFormat(QImage.Format.Format_Grayscale8)
+                    if not img.isNull() else img)
+            self._bg_img_cache = (bg.image_b64, img, gray)
+        return self._bg_img_cache[1], self._bg_img_cache[2]
+
+    def _bg_transform(self, bg):
+        sig = tuple((p.px, p.py, p.x, p.y) for p in bg.points)
+        if self._bg_tf_cache[0] != sig:
+            from app.model.calibration import compute_transform
+            t, _ = compute_transform(bg.points)
+            self._bg_tf_cache = (sig, t)
+        return self._bg_tf_cache[1]
+
+    def invalidate_background_cache(self):
+        self._bg_img_cache = (None, None, None)
+        self._bg_tf_cache = (None, None)
+
+    def _draw_background(self, painter: QPainter):
+        bg = self._project.background if self._project else None
+        if bg is None or bg.display_mode == "hidden" or not bg.image_b64:
+            return
+        img, gray = self._bg_qimage(bg)
+        if img is None or img.isNull():
+            return
+        t = self._bg_transform(bg)
+        if t is None:
+            return   # not enough calibration points yet
+
+        wts = QTransform()
+        wts.translate(self._origin.x(), self._origin.y())
+        wts.scale(self._zoom, -self._zoom)
+        combined = t * wts   # pixel -> machine mm -> screen
+
+        tl = self._w2s(0, MACHINE_H)
+        br = self._w2s(MACHINE_W, 0)
+        bed = QRectF(tl, br)
+
+        painter.save()
+        painter.setClipRect(bed)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.setOpacity(max(0.0, min(1.0, bg.opacity)))
+        src = gray if bg.display_mode == "gray" else img
+        painter.setTransform(combined, combine=False)
+        painter.drawImage(0, 0, src)
+        painter.resetTransform()
+        painter.setOpacity(1.0)
+        if bg.display_mode == "faded":
+            painter.fillRect(bed, QColor(255, 255, 255, 120))
+        painter.restore()
+
+    def _draw_calibration_points(self, painter: QPainter):
+        bg = self._project.background if self._project else None
+        if bg is None or not bg.points_visible or not bg.points:
+            return
+        col = QColor("#E000E0")   # magenta — distinct from ref/saved markers
+        arm = 9
+        painter.setFont(QFont("Sans", 8, QFont.Weight.Bold))
+        for i, p in enumerate(bg.points):
+            sp = self._w2s(p.x, p.y)
+            painter.setPen(QPen(col, 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawLine(QPointF(sp.x() - arm, sp.y()), QPointF(sp.x() + arm, sp.y()))
+            painter.drawLine(QPointF(sp.x(), sp.y() - arm), QPointF(sp.x(), sp.y() + arm))
+            painter.setBrush(QColor(224, 0, 224, 150))
+            painter.drawEllipse(sp, 3, 3)
+            painter.setPen(QPen(col, 1))
+            tag = p.label or f"C{i + 1}"
+            painter.drawText(sp + QPointF(arm + 3, -3), tag)
+            painter.setFont(QFont("Sans", 7))
+            painter.setPen(QPen(QColor("#9900AA"), 1))
+            painter.drawText(sp + QPointF(arm + 3, 9), f"({p.x:.1f} / {p.y:.1f})")
+            painter.setFont(QFont("Sans", 8, QFont.Weight.Bold))
 
     def _draw_wcs_marker(self, painter: QPainter):
         if self._project is None:

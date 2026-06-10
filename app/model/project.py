@@ -6,6 +6,7 @@ from .gcode_object import GcodeObject
 from .zone import ForbiddenZone
 from .ref_point import RefPoint
 from .saved_point import SavedPoint
+from .calibration import BackgroundImage
 from .types import SpeedSettings, GridSettings
 
 MACHINE_W = 483.0
@@ -18,6 +19,7 @@ class Project:
         self.forbidden_zones: list[ForbiddenZone] = []
         self.ref_points: list[RefPoint] = []
         self.saved_points: list[SavedPoint] = []
+        self.background: Optional[BackgroundImage] = None
         self.speeds = SpeedSettings()
         self.grid = GridSettings()
         self.work_offset_x: float = 0.0
@@ -116,6 +118,7 @@ class Project:
             "forbidden_zones": [z.to_dict() for z in self.forbidden_zones],
             "ref_points": [r.to_dict() for r in self.ref_points],
             "saved_points": [p.to_dict() for p in self.saved_points],
+            "background": self.background.to_dict() if self.background else None,
             "speeds": self.speeds.to_dict(),
             "grid": self.grid.to_dict(),
             "work_offset_x": self.work_offset_x,

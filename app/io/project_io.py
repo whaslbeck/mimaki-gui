@@ -7,6 +7,7 @@ from app.model.types import SpeedSettings, GridSettings, Move, Pos
 from app.model.zone import ForbiddenZone
 from app.model.ref_point import RefPoint
 from app.model.saved_point import SavedPoint
+from app.model.calibration import BackgroundImage
 from app.io.gcode_parser import parse_gcode
 from app.io.hpgl_parser import parse_hpgl
 
@@ -63,6 +64,10 @@ def load_project(filepath: str) -> tuple[Project, list[tuple[str, dict]]]:
 
     for pd in data.get("saved_points", []):
         project.saved_points.append(SavedPoint.from_dict(pd))
+
+    bg = data.get("background")
+    if bg:
+        project.background = BackgroundImage.from_dict(bg)
 
     project.speeds = SpeedSettings.from_dict(data.get("speeds", {}))
     project.grid = GridSettings.from_dict(data.get("grid", {}))
